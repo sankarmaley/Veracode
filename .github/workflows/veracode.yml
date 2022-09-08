@@ -1,0 +1,68 @@
+stages:
+  - gitsecret
+  - dependency_scanning
+  - SAST
+
+git_secret:
+  stage: gitsecret
+  tags:
+    - prod-core
+  variables:
+    GIT_DEPTH: 0
+  image:
+    name: $ECR_REGISTRY/$GITSECRETSCAN_REPOSITORY:$gitsecretstst
+    entrypoint: [""]
+  before_script:
+    - existed_in_local=$(git branch --list $CI_BUILD_REF_NAME)
+    - if [[ -z ${existed_in_local} ]]; then git branch --track $CI_BUILD_REF_NAME remotes/origin/$CI_BUILD_REF_NAME; fi
+  script:
+    - >
+      python3 /git-secrets/identifysecret.py .
+      -v True -d 1 -b $CI_BUILD_REF_NAME
+  only:
+    - merge_requests
+    - dev
+  artifacts:
+    paths:
+      - /artifact.txt
+    expire_in: 1 week
+    when: always
+    name: "Git-Secret-${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHA}"
+    
+ 
+OSS:
+  stage: dependency_scanning
+  tags:
+    - prod-core
+  image: 
+    name: $ECR_REGISTRY/$SNYKSCAN_REPOSITORY:$SNYKSCAN_VERSION
+    entrypoint: [""]
+  script:
+    - python3 /snyk/entrypoint.py bt-poc "${CI_PROJECT_NAME}" --key=$SNYK_TOKEN 
+  only:
+    - merge_requests
+    - main
+  artifacts:
+       paths:
+          - snyk_results.html
+       expire_in: 1 week    
+       when: always
+       name: "OSS-${CI_PROJECT_NAME}_${CI_COMMIT_REF_NAME}_${CI_COMMIT_SHA}"
+
+SAST:
+  tags:
+    - prod-core
+  image:
+    name: $ECR_REGISTRY/$VERACODESCAN_REPOSITORY:$VERACODESCAN_VERSION
+  stage: SAST
+  script:
+    - python3 /veracode/entrypoint.py "${CI_PROJECT_PATH}" --vid=$VERACODE_ID --vkey=$VERACODE_KEY  --project_url "${CI_REPOSITORY_URL}" --project_ref "${CI_COMMIT_REF_NAME}" 
+  allow_failure: true
+  only:
+    - merge_requests
+    - dev
+  artifacts:
+        paths:
+            - results.json
+        when: always
+        name: "veracode-sast-$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
